@@ -471,7 +471,7 @@ core::TensorValue build_self_attention_flash(
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     core::TensorValue context;
-    if (ctx.backend_type == core::BackendType::Cuda) {
+    if (ctx.backend_type == core::BackendType::Cuda || ctx.backend_type == core::BackendType::Vulkan) {
         q_heads = ensure_contiguous(ctx, q_heads);
         k_heads = ensure_contiguous(ctx, k_heads);
         v_heads = ensure_contiguous(ctx, v_heads);
@@ -558,7 +558,7 @@ core::TensorValue build_cross_attention_flash(
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     core::TensorValue context;
-    if (ctx.backend_type == core::BackendType::Cuda) {
+    if (ctx.backend_type == core::BackendType::Cuda || ctx.backend_type == core::BackendType::Vulkan) {
         q_heads = ensure_contiguous(ctx, q_heads);
         k_heads = ensure_contiguous(ctx, k_heads);
         v_heads = ensure_contiguous(ctx, v_heads);

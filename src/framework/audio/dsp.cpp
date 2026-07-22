@@ -616,10 +616,10 @@ AudioTensor MelFilterbank::compute(
     for (int64_t b = 0; b < batch; ++b) {
         for (int64_t m = 0; m < config.n_mels; ++m) {
             for (int64_t t = 0; t < frames; ++t) {
-                long double sum = 0.0;
+                double sum = 0.0;
                 for (int64_t f = 0; f < freq_bins; ++f) {
-                    sum += static_cast<long double>(filterbank.values[static_cast<size_t>(m * freq_bins + f)]) *
-                           static_cast<long double>(power_spec[static_cast<size_t>(((b * freq_bins) + f) * frames + t)]);
+                    sum += static_cast<double>(filterbank.values[static_cast<size_t>(m * freq_bins + f)]) *
+                           static_cast<double>(power_spec[static_cast<size_t>(((b * freq_bins) + f) * frames + t)]);
                 }
                 result.values[static_cast<size_t>(((b * config.n_mels) + m) * frames + t)] = static_cast<float>(sum);
             }
@@ -654,10 +654,10 @@ AudioTensor MelFilterbank::compute_custom(
     for (int64_t b = 0; b < batch; ++b) {
         for (int64_t m = 0; m < n_mels; ++m) {
             for (int64_t t = 0; t < frames; ++t) {
-                long double sum = 0.0;
+                double sum = 0.0;
                 for (int64_t f = 0; f < freq_bins; ++f) {
-                    sum += static_cast<long double>(filterbank.values[static_cast<size_t>(m * freq_bins + f)]) *
-                           static_cast<long double>(power_spec[static_cast<size_t>(((b * freq_bins) + f) * frames + t)]);
+                    sum += static_cast<double>(filterbank.values[static_cast<size_t>(m * freq_bins + f)]) *
+                           static_cast<double>(power_spec[static_cast<size_t>(((b * freq_bins) + f) * frames + t)]);
                 }
                 result.values[static_cast<size_t>(((b * n_mels) + m) * frames + t)] = static_cast<float>(sum);
             }

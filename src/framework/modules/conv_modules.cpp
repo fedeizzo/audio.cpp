@@ -105,14 +105,15 @@ core::TensorValue conv_transpose1d_weight(
     if (contiguous.type == GGML_TYPE_F32) {
         return contiguous;
     }
-    if (contiguous.type == GGML_TYPE_F16 && core::uses_host_graph_plan(ctx.backend_type)) {
+    // FASTCONV: F16 weights pass through on all backends.
+    // CPU (host graph plan) always handled F16 natively.
+    // GPU backends (Vulkan/CUDA/Metal) handle F16 via ggml_conv_transpose_1d
+    // and ggml_mul_mat natively — casting to F32 wastes memory bandwidth.
+    if (contiguous.type == GGML_TYPE_F16) {
         return contiguous;
     }
-    if (contiguous.type == GGML_TYPE_BF16 && core::uses_host_graph_plan(ctx.backend_type)) {
+    if (contiguous.type == GGML_TYPE_BF16) {
         return core::wrap_tensor(ggml_cast(ctx.ggml, contiguous.tensor, GGML_TYPE_F16), contiguous.shape, GGML_TYPE_F16);
-    }
-    if (contiguous.type == GGML_TYPE_F16 || contiguous.type == GGML_TYPE_BF16) {
-        return core::wrap_tensor(ggml_cast(ctx.ggml, contiguous.tensor, GGML_TYPE_F32), contiguous.shape, GGML_TYPE_F32);
     }
     if (ggml_is_quantized(contiguous.type)) {
         return core::wrap_tensor(ggml_cast(ctx.ggml, contiguous.tensor, GGML_TYPE_F32), contiguous.shape, GGML_TYPE_F32);
@@ -126,10 +127,15 @@ core::TensorValue depthwise_conv2d_weight(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & weight) {
     const auto contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, weight);
-    if (contiguous.type == GGML_TYPE_F32) {
+    if (contiguous.type == GGML_TYPE_F32 || contiguous.type == GGML_TYPE_F16) {
         return contiguous;
     }
-    if (contiguous.type == GGML_TYPE_F16 || contiguous.type == GGML_TYPE_BF16 || ggml_is_quantized(contiguous.type)) {
+    // FASTCONV: BF16 gets cast to F16 (preserving half-precision bandwidth savings).
+    // Quantized types still need F32 for depthwise conv correctness.
+    if (contiguous.type == GGML_TYPE_BF16) {
+        return core::wrap_tensor(ggml_cast(ctx.ggml, contiguous.tensor, GGML_TYPE_F16), contiguous.shape, GGML_TYPE_F16);
+    }
+    if (ggml_is_quantized(contiguous.type)) {
         return core::wrap_tensor(ggml_cast(ctx.ggml, contiguous.tensor, GGML_TYPE_F32), contiguous.shape, GGML_TYPE_F32);
     }
     throw std::runtime_error(
@@ -192,7 +198,9 @@ core::TensorValue build_conv_transpose1d_cuda_col2im_path(
     }
     const auto input_contiguous = core::ensure_backend_addressable_layout(ctx, input);
     auto weight_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, weights.weight);
-    if (weight_contiguous.type != GGML_TYPE_F32) {
+    // FASTCONV: Allow F16 weights through to ggml_mul_mat on GPU backends.
+    // mul_mat handles F16 natively on Vulkan/CUDA/Metal — no need to cast to F32.
+    if (weight_contiguous.type != GGML_TYPE_F32 && weight_contiguous.type != GGML_TYPE_F16) {
         weight_contiguous = core::wrap_tensor(ggml_cast(ctx.ggml, weight_contiguous.tensor, GGML_TYPE_F32), weight_contiguous.shape, GGML_TYPE_F32);
     }
     auto * weight_perm = ggml_reshape_2d(
@@ -261,7 +269,7 @@ core::TensorValue view_batch_matrix(
 bool is_conv_transpose1d_col2im_fast_path_eligible(
     const core::ModuleBuildContext & ctx,
     const ConvTranspose1dConfig & config) noexcept {
-    return ctx.backend_type == core::BackendType::Cuda && config.dilation == 1;
+    return (ctx.backend_type == core::BackendType::Cuda || ctx.backend_type == core::BackendType::Vulkan) && config.dilation == 1;
 }
 
 Conv1dModule::Conv1dModule(Conv1dConfig config) : config_(config) {

@@ -542,7 +542,7 @@ VibeVoiceASRSession::VibeVoiceASRSession(
       greedy_compare_bf16_(
           decoder_weight_storage_type_ == assets::TensorStorageType::Native && options.backend.type == core::BackendType::Cuda),
       sampling_policy_(
-          options.backend.type == core::BackendType::Cuda
+          (options.backend.type == core::BackendType::Cuda || options.backend.type == core::BackendType::Vulkan)
               ? sampling::resolve_torch_cuda_sampling_policy(
                     options.backend.type,
                     options.backend.device,

@@ -1069,7 +1069,7 @@ public:
             throw std::runtime_error("VieNeu-TTS talker weights runtime requires positive thread count");
         }
         backend_type_ = backend_type;
-        sampling_policy_ = backend_type_ == core::BackendType::Cuda
+        sampling_policy_ = (backend_type_ == core::BackendType::Cuda || backend_type_ == core::BackendType::Vulkan)
             ? engine::sampling::resolve_torch_cuda_sampling_policy(
                   backend_type_,
                   device,

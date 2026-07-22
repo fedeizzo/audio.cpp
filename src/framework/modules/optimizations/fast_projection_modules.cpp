@@ -59,8 +59,8 @@ core::TensorValue FastPackedProjection4Module::build(
     if (ctx.ggml == nullptr) {
         throw std::runtime_error("ModuleBuildContext.ggml is null");
     }
-    if (ctx.backend_type != core::BackendType::Cuda) {
-        throw std::runtime_error("FastPackedProjection4Module is CUDA-only");
+    if (ctx.backend_type != core::BackendType::Cuda && ctx.backend_type != core::BackendType::Vulkan) {
+        throw std::runtime_error("FastPackedProjection4Module is CUDA and Vulkan only");
     }
 
     core::validate_rank_between(input, 1, core::kMaxTensorRank, "input");

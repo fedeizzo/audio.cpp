@@ -59,9 +59,10 @@ core::TensorValue repeat_kv_heads(core::ModuleBuildContext & ctx, const core::Te
     if (repeats == 1) {
         return input;
     }
+    const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
     auto expanded = core::reshape_tensor(
         ctx,
-        input,
+        contiguous,
         core::TensorShape::from_dims({
             input.shape.dims[0],
             input.shape.dims[1],

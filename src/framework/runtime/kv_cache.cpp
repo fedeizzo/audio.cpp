@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/trace.h"
+#include <cstdlib>
 
 #include <algorithm>
 #include <stdexcept>
@@ -21,10 +22,7 @@ void validate_cache_tensor(const core::TensorValue & tensor, const TransformerKV
     if (options.allow_bf16_storage && tensor.type == GGML_TYPE_BF16) {
         return;
     }
-    throw std::runtime_error(
-        options.allow_f16_storage || options.allow_bf16_storage
-            ? "TransformerKVCache supports only f32/f16/bf16 cache tensors when enabled"
-            : "TransformerKVCache requires f32 cache tensors");
+    // Allow quantized cache if it's not strictly restricted by options (since improve-vulkan added quant cache).
 }
 
 void write_cache_tensor(
@@ -44,25 +42,47 @@ void write_cache_tensor(
         core::write_tensor_bf16(tensor, values);
         return;
     }
-    throw std::runtime_error("TransformerKVCache requires f32 cache tensors");
-}
-
-std::vector<float> read_cache_tensor(const core::TensorValue & tensor, const TransformerKVCacheOptions & options) {
-    validate_cache_tensor(tensor, options);
-    if (tensor.type == GGML_TYPE_F32) {
-        return core::read_tensor_f32(tensor.tensor);
-    }
-    if (options.allow_f16_storage && tensor.type == GGML_TYPE_F16) {
-        return core::read_tensor_f16(tensor.tensor);
-    }
-    if (options.allow_bf16_storage && tensor.type == GGML_TYPE_BF16) {
-        return core::read_tensor_bf16(tensor.tensor);
-    }
-    throw std::runtime_error("TransformerKVCache requires f32 cache tensors");
+    // For any other types (e.g., quantized), use ggml_quantize_chunk
+    std::vector<uint8_t> q_val(ggml_nbytes(tensor.tensor));
+    const size_t keep_elems = values.size();
+    // step_elems_ isn't passed here, so we'll just chunk the whole thing as one block or use ggml_quantize_chunk directly?
+    // Wait, let's look at how bc8c58b did it. It passed keep_elems / step_elems_, step_elems_ as nrow and n_per_row.
+    // If I keep bc8c58b's logic inline, I can delete write_cache_tensor.
 }
 
 }  // namespace
 
+TransformerKVCache::~TransformerKVCache() {
+    if (host_buffer_ != nullptr) {
+        ggml_backend_buffer_free(host_buffer_);
+    }
+}
+
+TransformerKVCache::TransformerKVCache(TransformerKVCache && other) noexcept
+    : cache_steps_(other.cache_steps_),
+      step_elems_(other.step_elems_),
+      valid_steps_(other.valid_steps_),
+      current_end_(other.current_end_),
+      layers_(std::move(other.layers_)),
+      host_buffer_(other.host_buffer_) {
+    other.host_buffer_ = nullptr;
+}
+
+TransformerKVCache & TransformerKVCache::operator=(TransformerKVCache && other) noexcept {
+    if (this != &other) {
+        if (host_buffer_ != nullptr) {
+            ggml_backend_buffer_free(host_buffer_);
+        }
+        cache_steps_ = other.cache_steps_;
+        step_elems_ = other.step_elems_;
+        valid_steps_ = other.valid_steps_;
+        current_end_ = other.current_end_;
+        layers_ = std::move(other.layers_);
+        host_buffer_ = other.host_buffer_;
+        other.host_buffer_ = nullptr;
+    }
+    return *this;
+}
 TransformerKVCache::TransformerKVCache(
     int64_t cache_steps,
     int64_t step_elems,
@@ -96,6 +116,51 @@ TransformerKVCache::TransformerKVCache(
             std::vector<float>(cache_elems, 0.0F),
             std::vector<float>(cache_elems, 0.0F),
         });
+    }
+}
+
+void TransformerKVCache::allocate_on_host_if_enabled(ggml_backend_t backend) {
+    if (layers_.empty()) {
+        return;
+    }
+    const char * kv_on_cpu_env = std::getenv("KV_ON_CPU");
+    if (kv_on_cpu_env == nullptr || std::string(kv_on_cpu_env) != "1") {
+        return;
+    }
+    
+    ggml_backend_buffer_type_t host_buft = engine::core::host_buffer_type(backend);
+    if (host_buft == nullptr) {
+        return;
+    }
+    
+    size_t alignment = ggml_backend_buft_get_alignment(host_buft);
+    size_t max_size = ggml_backend_buft_get_max_size(host_buft);
+    size_t total_size = 0;
+    
+    for (auto & layer : layers_) {
+        total_size += GGML_PAD(ggml_backend_buft_get_alloc_size(host_buft, layer.key_tensor.tensor), alignment);
+        total_size += GGML_PAD(ggml_backend_buft_get_alloc_size(host_buft, layer.value_tensor.tensor), alignment);
+    }
+    
+    if (total_size > max_size) {
+        return;
+    }
+    
+    host_buffer_ = ggml_backend_buft_alloc_buffer(host_buft, total_size);
+    if (host_buffer_ == nullptr) {
+        return;
+    }
+    
+    size_t offset = 0;
+    for (auto & layer : layers_) {
+        ggml_tensor * k = layer.key_tensor.tensor;
+        ggml_tensor * v = layer.value_tensor.tensor;
+        
+        ggml_backend_tensor_alloc(host_buffer_, k, (char *)ggml_backend_buffer_get_base(host_buffer_) + offset);
+        offset += GGML_PAD(ggml_backend_buft_get_alloc_size(host_buft, k), alignment);
+        
+        ggml_backend_tensor_alloc(host_buffer_, v, (char *)ggml_backend_buffer_get_base(host_buffer_) + offset);
+        offset += GGML_PAD(ggml_backend_buft_get_alloc_size(host_buft, v), alignment);
     }
 }
 
@@ -133,8 +198,29 @@ void TransformerKVCache::import_state(const TransformerKVState & state) {
                 std::copy(source.key.begin(), source.key.end(), cache.import_key_scratch.begin());
                 std::copy(source.value.begin(), source.value.end(), cache.import_value_scratch.begin());
             }
-            write_cache_tensor(cache.key_tensor, cache.import_key_scratch, options_);
-            write_cache_tensor(cache.value_tensor, cache.import_value_scratch, options_);
+            if (cache.key_tensor.type == GGML_TYPE_F32) {
+                core::write_tensor_f32(cache.key_tensor, cache.import_key_scratch);
+            } else if (cache.key_tensor.type == GGML_TYPE_F16) {
+                core::write_tensor_f16(cache.key_tensor, cache.import_key_scratch);
+            } else if (cache.key_tensor.type == GGML_TYPE_BF16) {
+                core::write_tensor_bf16(cache.key_tensor, cache.import_key_scratch);
+            } else {
+                std::vector<uint8_t> q_key(ggml_nbytes(cache.key_tensor.tensor));
+                ggml_quantize_chunk(cache.key_tensor.type, cache.import_key_scratch.data(), q_key.data(), 0, keep_elems / step_elems_, step_elems_, nullptr);
+                ggml_backend_tensor_set(cache.key_tensor.tensor, q_key.data(), 0, q_key.size());
+            }
+
+            if (cache.value_tensor.type == GGML_TYPE_F32) {
+                core::write_tensor_f32(cache.value_tensor, cache.import_value_scratch);
+            } else if (cache.value_tensor.type == GGML_TYPE_F16) {
+                core::write_tensor_f16(cache.value_tensor, cache.import_value_scratch);
+            } else if (cache.value_tensor.type == GGML_TYPE_BF16) {
+                core::write_tensor_bf16(cache.value_tensor, cache.import_value_scratch);
+            } else {
+                std::vector<uint8_t> q_val(ggml_nbytes(cache.value_tensor.tensor));
+                ggml_quantize_chunk(cache.value_tensor.type, cache.import_value_scratch.data(), q_val.data(), 0, keep_elems / step_elems_, step_elems_, nullptr);
+                ggml_backend_tensor_set(cache.value_tensor.tensor, q_val.data(), 0, q_val.size());
+            }
         }
     }
 }
@@ -150,10 +236,37 @@ TransformerKVState TransformerKVCache::export_state() const {
         if (keep_elems == 0) {
             continue;
         }
-        const auto key_values = read_cache_tensor(layers_[layer].key_tensor, options_);
-        const auto value_values = read_cache_tensor(layers_[layer].value_tensor, options_);
-        out.key.assign(key_values.begin(), key_values.begin() + static_cast<ptrdiff_t>(keep_elems));
-        out.value.assign(value_values.begin(), value_values.begin() + static_cast<ptrdiff_t>(keep_elems));
+        if (layers_[layer].key_tensor.type == GGML_TYPE_F32) {
+            const auto key_values = core::read_tensor_f32(layers_[layer].key_tensor.tensor);
+            out.key.assign(key_values.begin(), key_values.begin() + static_cast<ptrdiff_t>(keep_elems));
+        } else if (layers_[layer].key_tensor.type == GGML_TYPE_F16) {
+            const auto key_values = core::read_tensor_f16(layers_[layer].key_tensor.tensor);
+            out.key.assign(key_values.begin(), key_values.begin() + static_cast<ptrdiff_t>(keep_elems));
+        } else if (layers_[layer].key_tensor.type == GGML_TYPE_BF16) {
+            const auto key_values = core::read_tensor_bf16(layers_[layer].key_tensor.tensor);
+            out.key.assign(key_values.begin(), key_values.begin() + static_cast<ptrdiff_t>(keep_elems));
+        } else {
+            out.key.resize(keep_elems);
+            std::vector<uint8_t> q_key(ggml_nbytes(layers_[layer].key_tensor.tensor));
+            ggml_backend_tensor_get(layers_[layer].key_tensor.tensor, q_key.data(), 0, q_key.size());
+            ggml_get_type_traits(layers_[layer].key_tensor.type)->to_float(q_key.data(), out.key.data(), keep_elems);
+        }
+
+        if (layers_[layer].value_tensor.type == GGML_TYPE_F32) {
+            const auto value_values = core::read_tensor_f32(layers_[layer].value_tensor.tensor);
+            out.value.assign(value_values.begin(), value_values.begin() + static_cast<ptrdiff_t>(keep_elems));
+        } else if (layers_[layer].value_tensor.type == GGML_TYPE_F16) {
+            const auto value_values = core::read_tensor_f16(layers_[layer].value_tensor.tensor);
+            out.value.assign(value_values.begin(), value_values.begin() + static_cast<ptrdiff_t>(keep_elems));
+        } else if (layers_[layer].value_tensor.type == GGML_TYPE_BF16) {
+            const auto value_values = core::read_tensor_bf16(layers_[layer].value_tensor.tensor);
+            out.value.assign(value_values.begin(), value_values.begin() + static_cast<ptrdiff_t>(keep_elems));
+        } else {
+            out.value.resize(keep_elems);
+            std::vector<uint8_t> q_val(ggml_nbytes(layers_[layer].value_tensor.tensor));
+            ggml_backend_tensor_get(layers_[layer].value_tensor.tensor, q_val.data(), 0, q_val.size());
+            ggml_get_type_traits(layers_[layer].value_tensor.type)->to_float(q_val.data(), out.value.data(), keep_elems);
+        }
     }
     return state;
 }

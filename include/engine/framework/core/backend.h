@@ -31,6 +31,7 @@ ggml_backend_t init_backend(const BackendConfig & config);
 void set_backend_threads(ggml_backend_t backend, int threads);
 BackendType backend_type(ggml_backend_t backend);
 bool is_host_backend(ggml_backend_t backend);
+ggml_backend_buffer_type_t host_buffer_type(ggml_backend_t backend);
 bool uses_host_graph_plan(BackendType type);
 bool uses_host_graph_plan(ggml_backend_t backend);
 bool requested_backend_uses_host_graph_plan(const BackendConfig & config);

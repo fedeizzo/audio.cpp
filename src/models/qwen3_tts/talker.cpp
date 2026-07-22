@@ -795,7 +795,7 @@ public:
             throw std::runtime_error("Qwen3 talker weights runtime requires positive thread count");
         }
         backend_type_ = backend_type;
-        sampling_policy_ = backend_type_ == core::BackendType::Cuda
+        sampling_policy_ = (backend_type_ == core::BackendType::Cuda || backend_type_ == core::BackendType::Vulkan)
             ? engine::sampling::resolve_torch_cuda_sampling_policy(
                   backend_type_,
                   device,
@@ -1059,6 +1059,7 @@ public:
         ggml_build_forward_expand(graph_, logits_output_);
         constants.finish_graph();
         constants.ensure_uploaded();
+        step_cache_.allocate_on_host_if_enabled(weights_->backend());
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate Qwen3 talker cached step graph");
@@ -1555,7 +1556,6 @@ private:
         core::set_backend_threads(weights_->backend(), weights_->threads());
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), prefill_graph_);
-        ggml_backend_synchronize(weights_->backend());
         timing_.graph_compute_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 code predictor prefill graph compute failed");
@@ -1597,7 +1597,6 @@ private:
         core::set_backend_threads(weights_->backend(), weights_->threads());
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), step_graph.graph);
-        ggml_backend_synchronize(weights_->backend());
         timing_.graph_compute_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 code predictor step graph compute failed");

@@ -80,7 +80,7 @@ core::TensorValue build_biased_gpt_projection(
     int64_t in_features,
     int64_t out_features,
     const modules::LinearWeights & weights) {
-    if (ctx.backend_type != core::BackendType::Cuda) {
+    if (ctx.backend_type != core::BackendType::Cuda && ctx.backend_type != core::BackendType::Vulkan) {
         return modules::LinearModule({in_features, out_features, true, GGML_PREC_F32}).build(ctx, input, weights);
     }
     if (out_features % 4 != 0) {

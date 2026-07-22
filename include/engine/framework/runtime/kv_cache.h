@@ -6,6 +6,12 @@
 #include <string>
 #include <vector>
 
+struct ggml_backend;
+typedef struct ggml_backend * ggml_backend_t;
+
+struct ggml_backend_buffer;
+typedef struct ggml_backend_buffer * ggml_backend_buffer_t;
+
 namespace engine::runtime {
 
 struct KVLayerState {
@@ -27,6 +33,12 @@ struct TransformerKVCacheOptions {
 class TransformerKVCache {
 public:
     TransformerKVCache() = default;
+    ~TransformerKVCache();
+    TransformerKVCache(TransformerKVCache &&) noexcept;
+    TransformerKVCache & operator=(TransformerKVCache &&) noexcept;
+    TransformerKVCache(const TransformerKVCache &) = delete;
+    TransformerKVCache & operator=(const TransformerKVCache &) = delete;
+
     TransformerKVCache(
         int64_t cache_steps,
         int64_t step_elems,
@@ -38,6 +50,8 @@ public:
         std::vector<core::TensorValue> keys,
         std::vector<core::TensorValue> values,
         TransformerKVCacheOptions options);
+
+    void allocate_on_host_if_enabled(ggml_backend_t backend);
 
     void import_state(const TransformerKVState & state);
     TransformerKVState export_state() const;
@@ -68,6 +82,7 @@ private:
     int64_t current_end_ = 0;
     TransformerKVCacheOptions options_;
     std::vector<LayerCache> layers_;
+    ggml_backend_buffer_t host_buffer_ = nullptr;
 };
 
 core::TensorValue view_transformer_kv_cache_steps(

@@ -9,6 +9,10 @@
 
 #include "ggml-cpu.h"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #ifdef GGML_USE_CUDA
 #include "ggml-cuda.h"
 #endif
@@ -154,6 +158,11 @@ ggml_backend_t init_backend(const BackendConfig & config) {
 void set_backend_threads(ggml_backend_t backend, int threads) {
     if (ggml_backend_is_cpu(backend)) {
         ggml_backend_cpu_set_n_threads(backend, threads);
+#ifdef _OPENMP
+        if (threads > 0) {
+            omp_set_num_threads(threads);
+        }
+#endif
     }
 }
 
@@ -161,8 +170,32 @@ bool is_host_backend(ggml_backend_t backend) {
     if (backend == nullptr) {
         return false;
     }
+    if (ggml_backend_is_cpu(backend)) {
+        return true;
+    }
     ggml_backend_dev_t device = ggml_backend_get_device(backend);
     return device != nullptr && ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_CPU;
+}
+
+ggml_backend_buffer_type_t host_buffer_type(ggml_backend_t backend) {
+    if (ggml_backend_is_cpu(backend)) {
+        return ggml_backend_cpu_buffer_type();
+    }
+    if (is_cuda_backend_handle(backend)) {
+#ifdef GGML_USE_CUDA
+        return ggml_backend_cuda_host_buffer_type();
+#else
+        return nullptr;
+#endif
+    }
+    if (is_vulkan_backend_handle(backend)) {
+#ifdef GGML_USE_VULKAN
+        return ggml_backend_vk_host_buffer_type();
+#else
+        return nullptr;
+#endif
+    }
+    return nullptr;
 }
 
 BackendType backend_type(ggml_backend_t backend) {
@@ -391,9 +424,15 @@ ggml_status compute_backend_graph(
 #else
     (void)label;
 #endif
-    return plan != nullptr
-        ? ggml_backend_graph_plan_compute(backend, plan)
-        : ggml_backend_graph_compute(backend, graph);
+    if (plan != nullptr) {
+        return ggml_backend_graph_plan_compute(backend, plan);
+    }
+    const auto status = ggml_backend_graph_compute_async(backend, graph);
+    if (status != GGML_STATUS_SUCCESS) {
+        return status;
+    }
+    ggml_backend_synchronize(backend);
+    return GGML_STATUS_SUCCESS;
 }
 
 void prepare_host_graph_plan(const ExecutionContext & execution_context, ggml_cgraph * graph, HostGraphPlan & plan) {
