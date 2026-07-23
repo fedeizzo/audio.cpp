@@ -25,6 +25,22 @@ void validate_cache_tensor(const core::TensorValue & tensor, const TransformerKV
     // Allow quantized cache if it's not strictly restricted by options (since improve-vulkan added quant cache).
 }
 
+std::vector<float> read_cache_tensor(
+    const core::TensorValue & tensor,
+    const TransformerKVCacheOptions & options) {
+    if (tensor.type == GGML_TYPE_F32) {
+        return core::read_tensor_f32(tensor.tensor);
+    }
+    if (options.allow_f16_storage && tensor.type == GGML_TYPE_F16) {
+        return core::read_tensor_f16(tensor.tensor);
+    }
+    if (options.allow_bf16_storage && tensor.type == GGML_TYPE_BF16) {
+        return core::read_tensor_bf16(tensor.tensor);
+    }
+    return core::read_tensor_f32(tensor.tensor);
+}
+
+
 void write_cache_tensor(
     const core::TensorValue & tensor,
     const std::vector<float> & values,

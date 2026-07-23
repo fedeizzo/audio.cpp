@@ -63,6 +63,7 @@ core::TensorValue FastKVSetRowsModule::build(
         throw std::runtime_error("FastKVSetRowsModule requires a contiguous cache tensor");
     }
 
+    const bool optimized = config_.mode == FastKVSetRowsMode::BackendViewOptimized;
     const int64_t steps = cache.shape.dims[1];
     const int64_t row_elems = cache.shape.dims[2] * cache.shape.dims[3];
     if (row_index.shape.dims[0] == 1) {
