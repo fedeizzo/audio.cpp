@@ -795,7 +795,7 @@ public:
             throw std::runtime_error("Qwen3 talker weights runtime requires positive thread count");
         }
         backend_type_ = backend_type;
-        sampling_policy_ = (backend_type_ == core::BackendType::Cuda || backend_type_ == core::BackendType::Vulkan)
+        sampling_policy_ = backend_type_ == core::BackendType::Cuda
             ? engine::sampling::resolve_torch_cuda_sampling_policy(
                   backend_type_,
                   device,

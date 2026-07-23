@@ -137,10 +137,8 @@ attention_from_heads(engine::core::ModuleBuildContext &ctx,
     const engine::core::TensorValue &v_heads, int64_t dim,
     const engine::core::TensorValue &attention_mask) {
   const auto q = ensure_contiguous(ctx, q_heads);
-  const auto k = ensure_contiguous(ctx, k_heads);
-  const auto v = ensure_contiguous(ctx, v_heads);
   auto *flash = ggml_flash_attn_ext(
-      ctx.ggml, q.tensor, k.tensor, v.tensor, attention_mask.tensor,
+      ctx.ggml, q.tensor, k_heads.tensor, v_heads.tensor, attention_mask.tensor,
       1.0F / std::sqrt(static_cast<float>(dim)), 0.0F, 0.0F);
   ggml_flash_attn_ext_set_prec(flash, GGML_PREC_F32);
   return engine::core::wrap_tensor(

@@ -105,11 +105,11 @@ QwenCausalDecoderStaticCacheOutputs QwenCausalDecoderModule::build_static_cache_
     for (const auto & layer : weights.stack.layers) {
         cache_keys.push_back(core::make_tensor(
             ctx,
-            GGML_TYPE_Q8_0,
+            GGML_TYPE_F32,
             core::TensorShape::from_dims({1, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
         cache_values.push_back(core::make_tensor(
             ctx,
-            GGML_TYPE_Q4_0,
+            GGML_TYPE_F32,
             core::TensorShape::from_dims({1, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
         auto out = layer_module.build_with_static_cache_tail(
             ctx,
