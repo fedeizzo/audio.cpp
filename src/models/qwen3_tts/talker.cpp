@@ -20,6 +20,7 @@
 #include <ggml.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -969,7 +970,6 @@ public:
         ggml_backend_tensor_set(input_, embeddings.data(), 0, embeddings.size() * sizeof(float));
         core::set_backend_threads(weights_->backend(), weights_->threads());
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), graph_);
-        ggml_backend_synchronize(weights_->backend());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 talker prefill graph compute failed");
         }
@@ -1120,7 +1120,6 @@ public:
         core::set_backend_threads(weights_->backend(), weights_->threads());
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), graph_);
-        ggml_backend_synchronize(weights_->backend());
         last_timing_.graph_compute_ms = engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 talker cached step graph compute failed");
@@ -1555,7 +1554,6 @@ private:
         core::set_backend_threads(weights_->backend(), weights_->threads());
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), prefill_graph_);
-        ggml_backend_synchronize(weights_->backend());
         timing_.graph_compute_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 code predictor prefill graph compute failed");
@@ -1597,7 +1595,6 @@ private:
         core::set_backend_threads(weights_->backend(), weights_->threads());
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(weights_->backend(), step_graph.graph);
-        ggml_backend_synchronize(weights_->backend());
         timing_.graph_compute_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Qwen3 code predictor step graph compute failed");
@@ -1721,6 +1718,18 @@ public:
                     weights_,
                     prompt_steps + next_generated_capacity);
                 cached_step_build_ms += engine::debug::elapsed_ms(build_start, Clock::now());
+                if (const char * env = std::getenv("ENGINE_LOG_KV_TRAFFIC"); env && env[0] == '1') {
+                    const auto & tcfg = weights_->assets().config.talker;
+                    const int64_t bytes_per_layer = static_cast<int64_t>(sizeof(float)) * 2 *
+                        tcfg.num_key_value_heads * attention_head_dim(tcfg);
+                    const int64_t total = bytes_per_layer * tcfg.num_hidden_layers * (prompt_steps + next_generated_capacity);
+                    debug::timing_log_scalar("qwen3_tts.talker.kv_cache_alloc_mb",
+                        static_cast<double>(total) / (1024.0 * 1024.0));
+                    debug::timing_log_scalar("qwen3_tts.talker.kv_layers", static_cast<double>(tcfg.num_hidden_layers));
+                    debug::timing_log_scalar("qwen3_tts.talker.kv_heads", static_cast<double>(tcfg.num_key_value_heads));
+                    debug::timing_log_scalar("qwen3_tts.talker.kv_head_dim", static_cast<double>(attention_head_dim(tcfg)));
+                    debug::timing_log_scalar("qwen3_tts.talker.kv_steps", static_cast<double>(prompt_steps + next_generated_capacity));
+                }
             }
             if (!cached_graph_has_state) {
                 const auto import_start = Clock::now();

@@ -126,11 +126,12 @@ Use the Linux helper script for CPU, CUDA, or Vulkan builds:
 
 ```bash
 scripts/build_linux.sh --backend cuda --target audiocpp_cli --target audiocpp_server
+scripts/build_linux.sh --backend hip --target audiocpp_cli --target audiocpp_server
 scripts/build_linux.sh --backend vulkan --target audiocpp_cli --target audiocpp_server
 scripts/build_linux.sh --backend cpu --target audiocpp_cli --target audiocpp_server
 ```
 
-The script writes to aligned build directories such as `build/linux-cuda-release`, `build/linux-vulkan-release`, and `build/linux-cpu-release`.
+The script writes to aligned build directories such as `build/linux-cuda-release`, `build/linux-hip-release`, `build/linux-vulkan-release`, and `build/linux-cpu-release`.
 
 For portable CPU kernels on machines where native ISA flags are not suitable:
 

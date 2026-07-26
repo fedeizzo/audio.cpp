@@ -291,7 +291,8 @@ std::vector<float> MioCodecWaveformReconstructor::reconstruct(
     const MioCodecWaveHead & head,
     const std::vector<float> & window) {
     const auto threads = static_cast<size_t>(std::max(1, execution_context_->config().threads));
-    if (execution_context_->backend_type() != engine::core::BackendType::Cuda) {
+    if (execution_context_->backend_type() != engine::core::BackendType::Cuda &&
+        execution_context_->backend_type() != engine::core::BackendType::Hip) {
         if (host_istft_ == nullptr || host_istft_frames_ != head.frames) {
             host_istft_ = std::make_unique<engine::audio::HostLogMagnitudePhaseISTFT>(
                 engine::audio::HostLogMagnitudePhaseISTFTConfig{

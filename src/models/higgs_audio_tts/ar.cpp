@@ -311,7 +311,7 @@ core::TensorValue build_modality_logits(
     const HiggsConfig & config) {
     const int64_t out_features = config.audio.num_codebooks * config.audio.vocab_size;
     const bool use_fast_projection =
-        ctx.backend_type == core::BackendType::Cuda && hidden.shape.rank == 3 &&
+        (ctx.backend_type == core::BackendType::Cuda || ctx.backend_type == core::BackendType::Hip) && hidden.shape.rank == 3 &&
         hidden.shape.dims[1] == 1 && out_features % 4 == 0;
     auto logits =
         use_fast_projection

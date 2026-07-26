@@ -5,6 +5,9 @@
 #ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
 #include "torch_random_cuda_runtime.h"
 #endif
+#ifdef ENGINE_HAS_HIP_TORCH_RANDOM
+#include "torch_random_hip_runtime.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -208,9 +211,20 @@ void fill_torch_cuda_tensor_iterator_randn(
             precision);
         return;
     }
+#elif defined(ENGINE_HAS_HIP_TORCH_RANDOM)
+    if (policy.cuda_fast_path) {
+        detail::fill_torch_hip_tensor_iterator_randn_hip(
+            output,
+            count,
+            seed,
+            offset_blocks,
+            policy,
+            precision);
+        return;
+    }
 #else
     if (policy.cuda_fast_path) {
-        throw std::runtime_error("torch CUDA TensorIterator randn fast path was requested but CUDA runtime was not built");
+        throw std::runtime_error("torch CUDA/HIP TensorIterator randn fast path was requested but runtime was not built");
     }
 #endif
     constexpr uint64_t unroll_factor = 4;
@@ -308,10 +322,19 @@ TorchCudaSamplingPolicy resolve_torch_cuda_sampling_policy(
     std::string_view model_name,
     TorchCudaSamplingPolicyFailureMode failure_mode) {
     TorchCudaSamplingPolicy policy;
-    if (backend_type != engine::core::BackendType::Cuda) {
-        log_default_policy(log_category, "backend is not CUDA");
+    if (backend_type != engine::core::BackendType::Cuda && backend_type != engine::core::BackendType::Hip) {
+        log_default_policy(log_category, "backend is neither CUDA nor HIP");
         return policy;
     }
+#if defined(ENGINE_HAS_HIP_TORCH_RANDOM) || defined(GGML_USE_HIP)
+    if (backend_type == engine::core::BackendType::Hip) {
+        policy.multiprocessor_count = 32;
+        policy.max_threads_per_multiprocessor = 1024;
+        policy.cuda_fast_path = true;
+        policy.cuda_device_index = device_index;
+        return policy;
+    }
+#endif
 #ifdef GGML_USE_CUDA
     const engine::io::DynamicLibraryHandle driver = engine::io::open_dynamic_library(
         {"libcuda.so.1", "libcuda.so", "libcuda.dylib", "nvcuda.dll"});

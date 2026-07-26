@@ -540,9 +540,9 @@ VibeVoiceASRSession::VibeVoiceASRSession(
           "vibevoice_asr.decoder_weight_type",
           option_weight_type(options, "vibevoice_asr.weight_type", assets::TensorStorageType::Native))),
       greedy_compare_bf16_(
-          decoder_weight_storage_type_ == assets::TensorStorageType::Native && options.backend.type == core::BackendType::Cuda),
+          decoder_weight_storage_type_ == assets::TensorStorageType::Native && (options.backend.type == core::BackendType::Cuda || options.backend.type == core::BackendType::Hip)),
       sampling_policy_(
-          options.backend.type == core::BackendType::Cuda
+          (options.backend.type == core::BackendType::Cuda || options.backend.type == core::BackendType::Hip)
               ? sampling::resolve_torch_cuda_sampling_policy(
                     options.backend.type,
                     options.backend.device,

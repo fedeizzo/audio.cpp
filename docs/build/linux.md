@@ -68,6 +68,16 @@ Vulkan:
 cmake -S . -B build -DENGINE_ENABLE_VULKAN=ON
 ```
 
+ROCm / HIP (AMD GPUs):
+
+```bash
+# Using Nix (recommended):
+nix develop .#rocm -c bash scripts/build_linux.sh --backend hip
+
+# Direct CMake:
+cmake -S . -B build -DENGINE_ENABLE_HIP=ON
+```
+
 Portable CPU-kernel fallback:
 
 ```bash

@@ -174,7 +174,7 @@ MossGenerator::MossGenerator(
       backbone_(backbone),
       depth_(depth),
       sampling_policy_(
-          execution_context.backend_type() == core::BackendType::Cuda
+          (execution_context.backend_type() == core::BackendType::Cuda || execution_context.backend_type() == core::BackendType::Hip)
               ? engine::sampling::resolve_torch_cuda_sampling_policy(
                     execution_context.backend_type(),
                     execution_context.config().device,

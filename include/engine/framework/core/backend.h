@@ -83,4 +83,25 @@ std::vector<float> read_tensor_bf16(const ggml_tensor * tensor);
 void read_tensor_i32_into(const ggml_tensor * tensor, std::vector<int32_t> & values);
 std::vector<int32_t> read_tensor_i32(const ggml_tensor * tensor);
 
+struct HostMemoryRegistration {
+    void * host_ptr = nullptr;
+    void * device_ptr = nullptr;
+    size_t size_bytes = 0;
+    bool is_registered = false;
+};
+
+HostMemoryRegistration register_host_memory_mapped(void * host_ptr, size_t size_bytes, BackendType backend_type);
+void unregister_host_memory_mapped(HostMemoryRegistration & registration);
+
+struct HipGraphExec {
+    void * graph = nullptr;
+    void * exec = nullptr;
+    bool is_instantiated = false;
+};
+
+void begin_hip_graph_capture(BackendType backend_type);
+HipGraphExec end_hip_graph_capture(BackendType backend_type);
+bool launch_hip_graph_exec(HipGraphExec & graph_exec, BackendType backend_type);
+void free_hip_graph_exec(HipGraphExec & graph_exec);
+
 }  // namespace engine::core

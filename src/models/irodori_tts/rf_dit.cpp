@@ -138,7 +138,7 @@ IrodoriJointAttentionWeights load_joint_attention(
     const std::string &prefix, assets::TensorStorageType storage_type,
     const IrodoriModelConfig &config, core::BackendType backend_type) {
   IrodoriJointAttentionWeights weights;
-  if (backend_type == core::BackendType::Cuda) {
+  if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip) {
     weights.qkvg =
         load_packed_qkvg(store, source, prefix, storage_type, config);
   } else {
@@ -532,7 +532,7 @@ core::TensorValue build_joint_attention(
   core::TensorValue k_self;
   core::TensorValue v_self;
   core::TensorValue gate;
-  if (ctx.backend_type == core::BackendType::Cuda) {
+  if (ctx.backend_type == core::BackendType::Cuda || ctx.backend_type == core::BackendType::Hip) {
     auto packed_projection = modules::FastPackedProjection4Module(
                                  {config.model_dim, 4 * config.model_dim})
                                  .build(ctx, x, weights.qkvg);

@@ -90,7 +90,7 @@ HTDemucsSession::HTDemucsSession(
     }
     const auto default_weight_storage = execution_context().uses_host_graph_plan()
         ? assets::TensorStorageType::F32
-        : (execution_context().backend_type() == core::BackendType::Cuda
+        : ((execution_context().backend_type() == core::BackendType::Cuda || execution_context().backend_type() == core::BackendType::Hip)
             ? assets::TensorStorageType::F16
             : assets::TensorStorageType::Native);
     weight_storage_type_ = option_weight_type(

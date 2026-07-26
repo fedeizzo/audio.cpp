@@ -51,7 +51,7 @@ VibeVoiceASRSpeechEncoder::VibeVoiceASRSpeechEncoder(
     assets::TensorStorageType connector_weight_storage_type)
     : assets_(std::move(assets)),
       sampling_policy_(
-          backend_type == core::BackendType::Cuda
+          (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip)
               ? std::optional<sampling::TorchCudaSamplingPolicy>(
                     sampling::resolve_torch_cuda_sampling_policy(
                         backend_type,

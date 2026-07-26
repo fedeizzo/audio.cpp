@@ -31,7 +31,7 @@
       packages = forAllSystems (system:
         let
           # A function to build audio.cpp with any set of features
-          mkAudioCpp = { pkgs, cudaSupport ? false, vulkanSupport ? false, metalSupport ? pkgs.stdenv.isDarwin }: 
+          mkAudioCpp = { pkgs, cudaSupport ? false, vulkanSupport ? false, rocmSupport ? false, metalSupport ? pkgs.stdenv.isDarwin }: 
             let
               # Python environment for model_manager.py
               myPython = pkgs.python3.withPackages (ps: with ps; [
@@ -50,7 +50,11 @@
                 cmake
                 ninja
                 pkg-config
-              ] ++ pkgs.lib.optional cudaSupport pkgs.cudaPackages.cuda_nvcc;
+              ] ++ pkgs.lib.optional cudaSupport pkgs.cudaPackages.cuda_nvcc
+                ++ pkgs.lib.optionals rocmSupport [
+                  pkgs.rocmPackages.clr
+                  pkgs.rocmPackages.hipcc
+                ];
 
               buildInputs = with pkgs; [
                 myPython
@@ -62,6 +66,12 @@
                 shaderc
               ] ++ pkgs.lib.optionals cudaSupport [
                 pkgs.cudaPackages.cudatoolkit
+              ] ++ pkgs.lib.optionals rocmSupport [
+                pkgs.rocmPackages.hipblas
+                pkgs.rocmPackages.rocblas
+                pkgs.rocmPackages.hipfft
+                pkgs.rocmPackages.rocwmma
+                pkgs.rocmPackages.rocrand
               ] ++ pkgs.lib.optionals metalSupport [
                 pkgs.apple-sdk_14
               ];
@@ -72,6 +82,7 @@
                 "-DENGINE_ENABLE_LLAMAFILE=ON"
               ] ++ pkgs.lib.optional vulkanSupport "-DENGINE_ENABLE_VULKAN=ON"
                 ++ pkgs.lib.optional cudaSupport "-DENGINE_ENABLE_CUDA=ON"
+                ++ pkgs.lib.optional rocmSupport "-DENGINE_ENABLE_HIP=ON"
                 ++ pkgs.lib.optional metalSupport "-DENGINE_ENABLE_METAL=ON";
 
               installPhase = ''
@@ -103,12 +114,13 @@
         in
         {
           # Expose specific backend variants
-          cpu = mkAudioCpp { pkgs = pkgs.${system}; cudaSupport = false; vulkanSupport = false; metalSupport = false; };
-          vulkan = mkAudioCpp { pkgs = pkgs.${system}; vulkanSupport = true; cudaSupport = false; metalSupport = false; };
+          cpu = mkAudioCpp { pkgs = pkgs.${system}; cudaSupport = false; vulkanSupport = false; rocmSupport = false; metalSupport = false; };
+          vulkan = mkAudioCpp { pkgs = pkgs.${system}; vulkanSupport = true; cudaSupport = false; rocmSupport = false; metalSupport = false; };
         } // pkgs.${system}.lib.optionalAttrs pkgs.${system}.stdenv.isLinux {
-          cuda = mkAudioCpp { pkgs = pkgsCuda.${system}; cudaSupport = true; vulkanSupport = false; metalSupport = false; };
+          cuda = mkAudioCpp { pkgs = pkgsCuda.${system}; cudaSupport = true; vulkanSupport = false; rocmSupport = false; metalSupport = false; };
+          rocm = mkAudioCpp { pkgs = pkgs.${system}; rocmSupport = true; cudaSupport = false; vulkanSupport = false; metalSupport = false; };
         } // pkgs.${system}.lib.optionalAttrs pkgs.${system}.stdenv.isDarwin {
-          metal = mkAudioCpp { pkgs = pkgs.${system}; metalSupport = true; cudaSupport = false; vulkanSupport = false; };
+          metal = mkAudioCpp { pkgs = pkgs.${system}; metalSupport = true; cudaSupport = false; rocmSupport = false; vulkanSupport = false; };
         } // {
           # Automatically select best default for the current platform
           default = if pkgs.${system}.stdenv.isDarwin then self.packages.${system}.metal else self.packages.${system}.vulkan;
@@ -123,6 +135,12 @@
         } // pkgs.${system}.lib.optionalAttrs pkgs.${system}.stdenv.isLinux {
           cuda = pkgsCuda.${system}.mkShell {
             inputsFrom = [ self.packages.${system}.cuda ];
+          };
+          rocm = pkgs.${system}.mkShell {
+            inputsFrom = [ self.packages.${system}.rocm ];
+            buildInputs = [ pkgs.${system}.rocmPackages.rocprofiler pkgs.${system}.coreutils ];
+            ROCM_PATH = "${pkgs.${system}.rocmPackages.clr}";
+            HIP_PATH = "${pkgs.${system}.rocmPackages.clr}";
           };
         }
       );

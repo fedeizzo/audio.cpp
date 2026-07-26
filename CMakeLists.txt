@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 
+if (POLICY CMP0060)
+    cmake_policy(SET CMP0060 NEW)
+endif()
+if (POLICY CMP0074)
+    cmake_policy(SET CMP0074 NEW)
+endif()
+
 project(AudioCpp LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
@@ -9,6 +16,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+if (CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES)
+    list(REMOVE_ITEM CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES "/opt/rocm/hip/lib" "/opt/rocm/lib" "/opt/rocm/lib64")
+endif()
 
 option(AUDIOCPP_DEPLOYMENT_BUILD
     "Compile model specs into the runtime for self-contained deployments"
@@ -49,6 +59,7 @@ if (NOT MSVC)
 endif()
 
 set(ENGINE_DEFAULT_ENABLE_CUDA OFF)
+set(ENGINE_DEFAULT_ENABLE_HIP OFF)
 set(ENGINE_DEFAULT_ENABLE_VULKAN OFF)
 set(ENGINE_DEFAULT_ENABLE_METAL OFF)
 set(ENGINE_DEFAULT_ENABLE_LLAMAFILE ON)
@@ -59,6 +70,9 @@ if (APPLE)
 endif()
 if (DEFINED GGML_CUDA)
     set(ENGINE_DEFAULT_ENABLE_CUDA ${GGML_CUDA})
+endif()
+if (DEFINED GGML_HIP)
+    set(ENGINE_DEFAULT_ENABLE_HIP ${GGML_HIP})
 endif()
 if (DEFINED GGML_VULKAN)
     set(ENGINE_DEFAULT_ENABLE_VULKAN ${GGML_VULKAN})
@@ -74,6 +88,7 @@ if (DEFINED GGML_CUDA_GRAPHS)
 endif()
 
 option(ENGINE_ENABLE_CUDA "Build ggml with CUDA backend support" ${ENGINE_DEFAULT_ENABLE_CUDA})
+option(ENGINE_ENABLE_HIP "Build ggml with ROCm/HIP backend support" ${ENGINE_DEFAULT_ENABLE_HIP})
 option(ENGINE_ENABLE_VULKAN "Build ggml with Vulkan backend support" ${ENGINE_DEFAULT_ENABLE_VULKAN})
 option(ENGINE_ENABLE_METAL "Build ggml with Metal backend support" ${ENGINE_DEFAULT_ENABLE_METAL})
 option(ENGINE_ENABLE_LLAMAFILE "Build ggml with llamafile SGEMM support" ${ENGINE_DEFAULT_ENABLE_LLAMAFILE})
@@ -86,6 +101,10 @@ option(ENGINE_BUILD_WARMBENCH "Build warmbench helper binaries" OFF)
 set(AUDIOCPP_GGML_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/external/ggml"
     CACHE PATH "ggml source tree to build with AudioCPP")
+
+if (ENGINE_ENABLE_CUDA AND ENGINE_ENABLE_HIP)
+    message(FATAL_ERROR "CUDA and HIP backends cannot both be enabled simultaneously")
+endif()
 
 if (ENGINE_ENABLE_CUDA)
     enable_language(CUDA)
@@ -113,6 +132,11 @@ set(GGML_BUILD_TESTS OFF CACHE BOOL "Do not build upstream tests" FORCE)
 set(GGML_ALL_WARNINGS OFF CACHE BOOL "Keep upstream warnings quiet in this sample" FORCE)
 set(GGML_CCACHE OFF CACHE BOOL "Do not probe for ccache in this local setup" FORCE)
 set(GGML_CUDA ${ENGINE_ENABLE_CUDA} CACHE BOOL "Build ggml with CUDA backend support" FORCE)
+set(GGML_HIP ${ENGINE_ENABLE_HIP} CACHE BOOL "Build ggml with ROCm/HIP backend support" FORCE)
+if (ENGINE_ENABLE_HIP)
+    set(GGML_HIP_UMA ON CACHE BOOL "Enable GGML HIP UMA memory on APU" FORCE)
+    set(GGML_ROCM_USE_HIPBLASLT ON CACHE BOOL "Use hipBLASLt for accelerated matmul" FORCE)
+endif()
 set(GGML_VULKAN ${ENGINE_ENABLE_VULKAN} CACHE BOOL "Build ggml with Vulkan backend support" FORCE)
 set(GGML_METAL ${ENGINE_ENABLE_METAL} CACHE BOOL "Build ggml with Metal backend support" FORCE)
 set(GGML_LLAMAFILE ${ENGINE_ENABLE_LLAMAFILE} CACHE BOOL "Build ggml with llamafile SGEMM support" FORCE)
@@ -621,6 +645,26 @@ if (ENGINE_ENABLE_CUDA)
     endif()
     target_compile_definitions(engine_runtime PUBLIC ENGINE_HAS_CUDA_ISTFT=1 ENGINE_HAS_CUDA_TORCH_RANDOM=1)
     target_link_libraries(engine_runtime PRIVATE CUDA::cudart CUDA::cufft)
+endif()
+
+if (ENGINE_ENABLE_HIP)
+    enable_language(HIP)
+    set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -ffast-math")
+    target_sources(engine_runtime PRIVATE
+        src/framework/audio/istft_hip_runtime.hip
+        src/framework/sampling/torch_random_hip_runtime.hip
+    )
+    set_source_files_properties(
+        src/framework/audio/istft_hip_runtime.hip
+        src/framework/sampling/torch_random_hip_runtime.hip
+        PROPERTIES
+        HIP_STANDARD 17
+        HIP_STANDARD_REQUIRED ON
+    )
+    target_compile_definitions(engine_runtime PUBLIC ENGINE_HAS_HIP_ISTFT=1 ENGINE_HAS_HIP_TORCH_RANDOM=1)
+    find_package(hip REQUIRED)
+    find_package(hipfft REQUIRED)
+    target_link_libraries(engine_runtime PRIVATE hip::host hip::hipfft)
 endif()
 
 add_executable(audiocpp_cli

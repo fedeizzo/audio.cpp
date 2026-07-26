@@ -336,7 +336,7 @@ MossTTSNanoLocalFrameDecoderRuntime::MossTTSNanoLocalFrameDecoderRuntime(
     : assets_(std::move(assets)),
       execution_context_(execution_context),
       sampling_policy_(
-          execution_context.backend_type() == core::BackendType::Cuda
+          (execution_context.backend_type() == core::BackendType::Cuda || execution_context.backend_type() == core::BackendType::Hip)
               ? engine::sampling::resolve_torch_cuda_sampling_policy(
                     execution_context.backend_type(),
                     execution_context.config().device,

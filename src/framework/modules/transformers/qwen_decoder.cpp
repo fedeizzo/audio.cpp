@@ -724,7 +724,9 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
     }
 
     auto q_heads = TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
+    if (config_.runtime.attention.static_mode != QwenDecoderAttentionMode::FlashGroupedViewKV) {
+        q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
+    }
     auto k_heads = TransposeModule({{0, 2, 1, 3}, attention_key_cache.shape.rank}).build(ctx, attention_key_cache);
     auto v_heads = TransposeModule({{0, 2, 1, 3}, attention_value_cache.shape.rank}).build(ctx, attention_value_cache);
     core::TensorValue context;

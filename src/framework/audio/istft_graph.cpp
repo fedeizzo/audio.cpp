@@ -4,6 +4,9 @@
 #ifdef ENGINE_HAS_CUDA_ISTFT
 #include "istft_cuda_runtime.h"
 #endif
+#ifdef ENGINE_HAS_HIP_ISTFT
+#include "istft_hip_runtime.h"
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -230,8 +233,17 @@ public:
                 config_.out_dim,
                 config_.device,
             });
+#elif defined(ENGINE_HAS_HIP_ISTFT)
+        hip_runtime_ = std::make_unique<detail::HipIstftRuntime>(
+            detail::HipIstftRuntimeConfig{
+                config_.frames,
+                config_.n_fft,
+                config_.hop_length,
+                config_.out_dim,
+                config_.device,
+            });
 #else
-        throw std::runtime_error("CUDA ISTFT runtime was not built");
+        throw std::runtime_error("CUDA/HIP ISTFT runtime was not built");
 #endif
     }
 
@@ -240,10 +252,10 @@ public:
         const std::vector<float> & window) {
         require(
             static_cast<int64_t>(log_magnitude_phase.size()) == config_.frames * config_.out_dim,
-            "CUDA ISTFT input size mismatch");
+            "CUDA/HIP ISTFT input size mismatch");
         require(
             static_cast<int64_t>(window.size()) == config_.n_fft,
-            "CUDA ISTFT window size mismatch");
+            "CUDA/HIP ISTFT window size mismatch");
 
 #ifdef ENGINE_HAS_CUDA_ISTFT
         auto runtime_result = runtime_->compute(log_magnitude_phase, window);
@@ -257,8 +269,20 @@ public:
         result.timing.audio_read_ms = runtime_result.timing.audio_read_ms;
         result.timing.total_ms = runtime_result.timing.total_ms;
         return result;
+#elif defined(ENGINE_HAS_HIP_ISTFT)
+        auto runtime_result = hip_runtime_->compute(log_magnitude_phase, window);
+        CudaLogMagnitudePhaseISTFTResult result;
+        result.audio = std::move(runtime_result.audio);
+        result.timing.input_upload_ms = runtime_result.timing.input_upload_ms;
+        result.timing.spectrum_kernel_ms = runtime_result.timing.spectrum_kernel_ms;
+        result.timing.fft_inverse_ms = runtime_result.timing.fft_inverse_ms;
+        result.timing.overlap_add_ms = runtime_result.timing.overlap_add_ms;
+        result.timing.normalize_ms = runtime_result.timing.normalize_ms;
+        result.timing.audio_read_ms = runtime_result.timing.audio_read_ms;
+        result.timing.total_ms = runtime_result.timing.total_ms;
+        return result;
 #else
-        throw std::runtime_error("CUDA ISTFT runtime was not built");
+        throw std::runtime_error("CUDA/HIP ISTFT runtime was not built");
 #endif
     }
 
@@ -266,6 +290,9 @@ private:
     CudaLogMagnitudePhaseISTFTConfig config_;
 #ifdef ENGINE_HAS_CUDA_ISTFT
     std::unique_ptr<detail::CudaIstftRuntime> runtime_;
+#endif
+#ifdef ENGINE_HAS_HIP_ISTFT
+    std::unique_ptr<detail::HipIstftRuntime> hip_runtime_;
 #endif
 };
 

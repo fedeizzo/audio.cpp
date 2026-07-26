@@ -9,8 +9,12 @@
 
 #include "ggml-cpu.h"
 
-#ifdef GGML_USE_CUDA
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP)
 #include "ggml-cuda.h"
+#endif
+
+#ifdef GGML_USE_HIP
+#include <hip/hip_runtime.h>
 #endif
 
 #ifdef GGML_USE_VULKAN
@@ -27,6 +31,19 @@ namespace {
 
 bool is_cuda_backend_handle(ggml_backend_t backend) {
 #ifdef GGML_USE_CUDA
+    if (backend == nullptr) {
+        return false;
+    }
+    ggml_backend_dev_t device = ggml_backend_get_device(backend);
+    return device != nullptr && ggml_backend_dev_backend_reg(device) == ggml_backend_cuda_reg();
+#else
+    (void)backend;
+    return false;
+#endif
+}
+
+bool is_hip_backend_handle(ggml_backend_t backend) {
+#ifdef GGML_USE_HIP
     if (backend == nullptr) {
         return false;
     }
@@ -104,6 +121,17 @@ ggml_backend_t init_backend(const BackendConfig & config) {
             throw std::runtime_error("CUDA backend requested but this build does not include GGML_USE_CUDA");
 #endif
         }
+        case BackendType::Hip: {
+#ifdef GGML_USE_HIP
+            ggml_backend_t backend = ggml_backend_cuda_init(config.device);
+            if (backend == nullptr) {
+                throw std::runtime_error("Failed to initialize HIP backend");
+            }
+            return backend;
+#else
+            throw std::runtime_error("HIP backend requested but this build does not include GGML_USE_HIP");
+#endif
+        }
         case BackendType::Vulkan: {
 #ifdef GGML_USE_VULKAN
             if (config.device < 0) {
@@ -172,6 +200,9 @@ BackendType backend_type(ggml_backend_t backend) {
     if (is_cuda_backend_handle(backend)) {
         return BackendType::Cuda;
     }
+    if (is_hip_backend_handle(backend)) {
+        return BackendType::Hip;
+    }
     if (is_vulkan_backend_handle(backend)) {
         return BackendType::Vulkan;
     }
@@ -197,8 +228,8 @@ void release_backend_graph_resources(ggml_backend_t backend, ggml_cgraph * graph
     if (backend == nullptr || graph == nullptr) {
         return;
     }
-#ifdef GGML_USE_CUDA
-    if (backend_name_has_prefix(backend, "CUDA")) {
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP)
+    if (backend_name_has_prefix(backend, "CUDA") || backend_name_has_prefix(backend, "ROCm")) {
         ggml_backend_cuda_clear_graph(backend, graph);
     }
 #endif
@@ -208,8 +239,8 @@ void release_backend_graph_resources(BackendType backend_type, ggml_backend_t ba
     if (backend == nullptr || graph == nullptr) {
         return;
     }
-#ifdef GGML_USE_CUDA
-    if (backend_type == BackendType::Cuda) {
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP)
+    if (backend_type == BackendType::Cuda || backend_type == BackendType::Hip) {
         ggml_backend_cuda_clear_graph(backend, graph);
     }
 #else
@@ -248,6 +279,20 @@ BackendMemorySnapshot query_backend_memory(ggml_backend_t backend, int device_hi
     BackendMemorySnapshot snapshot;
 #ifdef GGML_USE_CUDA
     if (is_cuda_backend_handle(backend)) {
+        size_t free_bytes = 0;
+        size_t total_bytes = 0;
+        ggml_backend_cuda_get_device_memory(device_hint, &free_bytes, &total_bytes);
+        if (total_bytes > 0 && free_bytes <= total_bytes) {
+            snapshot.available = true;
+            snapshot.total_bytes = static_cast<int64_t>(total_bytes);
+            snapshot.free_bytes = static_cast<int64_t>(free_bytes);
+            snapshot.used_bytes = static_cast<int64_t>(total_bytes - free_bytes);
+        }
+        return snapshot;
+    }
+#endif
+#ifdef GGML_USE_HIP
+    if (is_hip_backend_handle(backend)) {
         size_t free_bytes = 0;
         size_t total_bytes = 0;
         ggml_backend_cuda_get_device_memory(device_hint, &free_bytes, &total_bytes);
@@ -300,6 +345,23 @@ BackendMemorySnapshot query_backend_memory(const BackendConfig & config) {
     switch (config.type) {
         case BackendType::Cuda:
 #ifdef GGML_USE_CUDA
+        {
+            size_t free_bytes = 0;
+            size_t total_bytes = 0;
+            ggml_backend_cuda_get_device_memory(config.device, &free_bytes, &total_bytes);
+            if (total_bytes > 0 && free_bytes <= total_bytes) {
+                snapshot.available = true;
+                snapshot.total_bytes = static_cast<int64_t>(total_bytes);
+                snapshot.free_bytes = static_cast<int64_t>(free_bytes);
+                snapshot.used_bytes = static_cast<int64_t>(total_bytes - free_bytes);
+            }
+            return snapshot;
+        }
+#else
+            return snapshot;
+#endif
+        case BackendType::Hip:
+#ifdef GGML_USE_HIP
         {
             size_t free_bytes = 0;
             size_t total_bytes = 0;
@@ -581,6 +643,109 @@ void read_tensor_i32_into(const ggml_tensor * tensor, std::vector<int32_t> & val
 
 std::vector<int32_t> read_tensor_i32(const ggml_tensor * tensor) {
     return read_tensor_typed<int32_t>(tensor, GGML_TYPE_I32);
+}
+
+HostMemoryRegistration register_host_memory_mapped(void * host_ptr, size_t size_bytes, BackendType backend_type) {
+    HostMemoryRegistration reg;
+    reg.host_ptr = host_ptr;
+    reg.size_bytes = size_bytes;
+    if (host_ptr == nullptr || size_bytes == 0) {
+        return reg;
+    }
+#if defined(GGML_USE_HIP) || defined(ENGINE_HAS_HIP_ISTFT)
+    if (backend_type == BackendType::Hip) {
+        hipError_t status = hipHostRegister(host_ptr, size_bytes, hipHostRegisterMapped);
+        if (status == hipSuccess) {
+            void * dev_ptr = nullptr;
+            if (hipHostGetDevicePointer(&dev_ptr, host_ptr, 0) == hipSuccess) {
+                reg.device_ptr = dev_ptr;
+                reg.is_registered = true;
+                return reg;
+            }
+            (void)hipHostUnregister(host_ptr);
+        }
+    }
+#else
+    (void)backend_type;
+#endif
+    reg.device_ptr = host_ptr;
+    return reg;
+}
+
+void unregister_host_memory_mapped(HostMemoryRegistration & registration) {
+    if (!registration.is_registered || registration.host_ptr == nullptr) {
+        registration = {};
+        return;
+    }
+#if defined(GGML_USE_HIP) || defined(ENGINE_HAS_HIP_ISTFT)
+    (void)hipHostUnregister(registration.host_ptr);
+#endif
+    registration = {};
+}
+
+void begin_hip_graph_capture(BackendType backend_type) {
+#if defined(GGML_USE_HIP) || defined(ENGINE_HAS_HIP_ISTFT)
+    if (backend_type == BackendType::Hip) {
+        hipStream_t stream = 0;
+        (void)hipStreamBeginCapture(stream, hipStreamCaptureModeGlobal);
+    }
+#else
+    (void)backend_type;
+#endif
+}
+
+HipGraphExec end_hip_graph_capture(BackendType backend_type) {
+    HipGraphExec result;
+#if defined(GGML_USE_HIP) || defined(ENGINE_HAS_HIP_ISTFT)
+    if (backend_type == BackendType::Hip) {
+        hipStream_t stream = 0;
+        hipGraph_t g = nullptr;
+        if (hipStreamEndCapture(stream, &g) == hipSuccess && g != nullptr) {
+            hipGraphExec_t instance = nullptr;
+            if (hipGraphInstantiate(&instance, g, nullptr, nullptr, 0) == hipSuccess && instance != nullptr) {
+                result.graph = g;
+                result.exec = instance;
+                result.is_instantiated = true;
+                return result;
+            }
+            (void)hipGraphDestroy(g);
+        }
+    }
+#else
+    (void)backend_type;
+#endif
+    return result;
+}
+
+bool launch_hip_graph_exec(HipGraphExec & graph_exec, BackendType backend_type) {
+    if (!graph_exec.is_instantiated || graph_exec.exec == nullptr) {
+        return false;
+    }
+#if defined(GGML_USE_HIP) || defined(ENGINE_HAS_HIP_ISTFT)
+    if (backend_type == BackendType::Hip) {
+        hipStream_t stream = 0;
+        return hipGraphLaunch(static_cast<hipGraphExec_t>(graph_exec.exec), stream) == hipSuccess;
+    }
+#else
+    (void)backend_type;
+#endif
+    return false;
+}
+
+void free_hip_graph_exec(HipGraphExec & graph_exec) {
+    if (!graph_exec.is_instantiated) {
+        graph_exec = {};
+        return;
+    }
+#if defined(GGML_USE_HIP) || defined(ENGINE_HAS_HIP_ISTFT)
+    if (graph_exec.exec != nullptr) {
+        (void)hipGraphExecDestroy(static_cast<hipGraphExec_t>(graph_exec.exec));
+    }
+    if (graph_exec.graph != nullptr) {
+        (void)hipGraphDestroy(static_cast<hipGraph_t>(graph_exec.graph));
+    }
+#endif
+    graph_exec = {};
 }
 
 }  // namespace engine::core

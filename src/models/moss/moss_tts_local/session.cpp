@@ -157,6 +157,7 @@ engine::assets::TensorStorageType resolve_auto_weight_type(engine::core::Backend
         case engine::core::BackendType::Cpu:
             return engine::assets::TensorStorageType::F32;
         case engine::core::BackendType::Cuda:
+        case engine::core::BackendType::Hip:
             return engine::assets::TensorStorageType::BF16;
         default:  // Metal, Vulkan, BestAvailable
             return engine::assets::TensorStorageType::Native;
